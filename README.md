@@ -41,9 +41,10 @@ kubectl create configmap llm-scheduler-config --from-literal=active_policy=FIFO
 ```
 
 ### Step 3: Run the Configurator Script
-Launch your Python script. The LLM will begin "sensing" the cluster and making decisions every 10 seconds.
+Launch your Python script. The LLM will begin "sensing" the cluster and making decisions every 10 seconds(default). 
+Provide `--sleep` value for custom time intervals.
 ```powershell
-python test_script.py
+python test_script.py --sleep 5
 ```
 ### Step 4: Simulate Cluster Load
 In a **new terminal window**, observe how the LLM reacts to different cluster states.

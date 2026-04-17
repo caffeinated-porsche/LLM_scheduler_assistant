@@ -95,19 +95,34 @@ Given a cluster snapshot, pick the best policy: FIFO, PRIORITY, BIN_PACKING, SPR
 Reply with ONLY the policy name. No prose, no JSON, no markdown.
 """
 
-FEW_SHOT_EXAMPLES = [
+FEW_SHOT_EXAMPLES: list[dict] = [
     {
-        "snapshot": "Workload type: compute_heavy\nQueue depth: 120 pods\nCluster: 8 nodes (avg CPU 35%)",
-        "decision": "BIN_PACKING"
+        "snapshot": "Workload type: compute_heavy\nQueue depth: 120 pods\nAvg CPU: 4.0\nCluster: 8 nodes (avg CPU 35%)",
+        "decision": "BIN_PACKING",
     },
     {
-        "snapshot": "Workload type: latency_sensitive\nRecent p99 lat: 180.0 ms\nCluster: 8 nodes (avg CPU 70%)",
-        "decision": "SPREAD"
+        "snapshot": "Workload type: latency_sensitive\nQueue depth: 18 pods\nAvg CPU: 0.5\nRecent p99 lat: 180.0 ms",
+        "decision": "SPREAD",
+    },
+    {
+        "snapshot": "Workload type: compute_heavy\nPod group size: 8\nCluster: 8 nodes",
+        "decision": "GANG",
+    },
+    {
+        "snapshot": "Workload type: latency_sensitive\nQueue depth: 50 pods\nDeadline: yes\nCluster: 4 nodes (avg CPU 80%)",
+        "decision": "PRIORITY",
+    },
+    {
+        "snapshot": "Workload type: compute_heavy\nQueue depth: 5 pods\nCluster: 4 nodes (avg CPU 92%)",
+        "decision": "SPREAD",
+    },
+    {
+        "snapshot": "Workload type: latency_sensitive\nQueue depth: 2 pods\nCluster: 10 nodes (avg CPU 5%)",
+        "decision": "FIFO",
     }
 ]
 
-
-def _build_messages(snapshot: ClusterSnapshot, n_examples: int = 1) -> list[dict]:
+def _build_messages(snapshot: ClusterSnapshot, n_examples: int = 2) -> list[dict]:
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for ex in FEW_SHOT_EXAMPLES[:n_examples]:
         messages.append({"role": "user", "content": f"Cluster snapshot:\n{ex['snapshot']}"})
@@ -148,7 +163,7 @@ def load_model(model_path: str | Path, **kwargs):
         verbose=kwargs.get("verbose", False)
     )
 
-def query_llm(snapshot: ClusterSnapshot, llm, n_examples: int = 1) -> TimedDecision:
+def query_llm(snapshot: ClusterSnapshot, llm, n_examples: int = 2) -> TimedDecision:
     messages = _build_messages(snapshot, n_examples=n_examples)
 
     t0 = time.perf_counter()
