@@ -30,9 +30,8 @@ pip install kubernetes llama-cpp-python
 ### Step 1: Create the Cluster
 Open a terminal and create a multi-node cluster using Kind.
 ```powershell
-kind create cluster --name llm-test
+kind create cluster --name llm-test --config sluster-config.yaml
 ```
-*Verification:* Run `kubectl get nodes`. You should see one control-plane node.
 
 ### Step 2: Prepare the ConfigMap
 The script manages a ConfigMap named `llm-scheduler-config`. Create it manually first to watch it change:
