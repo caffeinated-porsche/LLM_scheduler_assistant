@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spread-stress
+spec:
+  replicas: 80
+  selector:
+    matchLabels:
+      app: spread-stress
+  template:
+    metadata:
+      labels:
+        app: spread-stress
+    spec:
+      containers:
+      - name: stress
+        image: polinux/stress
+        args: ["stress", "--cpu", "2", "--vm", "1", "--vm-bytes", "512M"]
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"

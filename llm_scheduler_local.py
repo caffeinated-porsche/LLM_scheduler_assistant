@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Optional
+from kubernetes import client
 
 os.environ.setdefault("LLAMA_N_THREADS_BATCH", "12")
 
@@ -25,7 +26,6 @@ class Policy(str, Enum):
     PRIORITY     = "PRIORITY"
     BIN_PACKING  = "BIN_PACKING"
     SPREAD       = "SPREAD"
-    GANG         = "GANG"
 
 @dataclass
 class NodeState:
@@ -44,7 +44,6 @@ class WorkloadDescriptor:
     avg_memory_request_gb:  float
     has_deadline:           bool
     deadline_seconds:       Optional[float] = None
-    pod_group_size:         Optional[int]   = None
 
 @dataclass
 class ClusterSnapshot:
@@ -64,7 +63,6 @@ class ClusterSnapshot:
             f"Avg CPU request  : {self.workload.avg_cpu_request} cores",
             f"Avg mem request  : {self.workload.avg_memory_request_gb} GB",
             f"Deadline         : {'yes' if self.workload.has_deadline else 'none'}",
-            f"Pod group size   : {self.workload.pod_group_size or 'N/A'}",
             f"Cluster          : {node_summary}",
         ]
         return "\n".join(lines)
@@ -90,39 +88,46 @@ class TimedDecision:
 
 SYSTEM_PROMPT = """\
 You are a Kubernetes scheduling policy advisor.
-Given a cluster snapshot, pick the best policy: FIFO, PRIORITY, BIN_PACKING, SPREAD, or GANG.
+Given a cluster snapshot, pick the best policy: FIFO, PRIORITY, BIN_PACKING, or SPREAD.
 
 Reply with ONLY the policy name. No prose, no JSON, no markdown.
 """
 
-FEW_SHOT_EXAMPLES: list[dict] = [
+FEW_SHOT_EXAMPLES = [
+
+    # --- 1. IDLE LATENCY → FIFO ---
     {
-        "snapshot": "Workload type: compute_heavy\nQueue depth: 120 pods\nAvg CPU: 4.0\nCluster: 8 nodes (avg CPU 35%)",
-        "decision": "BIN_PACKING",
+        "snapshot": """{"workload": {"workload_type": "latency_sensitive", "avg_cpu_request": 1.0, "avg_memory_request_gb": 2.0, "has_deadline": true}, "nodes": [{"cpu_utilization": 0.01, "memory_utilization": 0.01}, {"cpu_utilization": 0.02, "memory_utilization": 0.02}]}""",
+        "decision": "FIFO"
     },
+
+    # --- 2. LATENCY + CONTENTION → SPREAD ---
     {
-        "snapshot": "Workload type: latency_sensitive\nQueue depth: 18 pods\nAvg CPU: 0.5\nRecent p99 lat: 180.0 ms",
-        "decision": "SPREAD",
+        "snapshot": """{"workload": {"workload_type": "latency_sensitive", "avg_cpu_request": 0.5, "avg_memory_request_gb": 1.0, "has_deadline": true}, "nodes": [{"cpu_utilization": 0.85, "memory_utilization": 0.80}, {"cpu_utilization": 0.90, "memory_utilization": 0.85}]}""",
+        "decision": "SPREAD"
     },
+
+    # --- 3. LATENCY + URGENT DEADLINE → PRIORITY ---
     {
-        "snapshot": "Workload type: compute_heavy\nPod group size: 8\nCluster: 8 nodes",
-        "decision": "GANG",
+        "snapshot": """{"workload": {"workload_type": "latency_sensitive", "avg_cpu_request": 0.7, "avg_memory_request_gb": 1.5, "has_deadline": true, "deadline_seconds": 60.0}, "nodes": [{"cpu_utilization": 0.60, "memory_utilization": 0.55}, {"cpu_utilization": 0.65, "memory_utilization": 0.60}]}""",
+        "decision": "PRIORITY"
     },
+
+    # --- 4. COMPUTE HEAVY + HIGH LOAD → BIN_PACKING ---
     {
-        "snapshot": "Workload type: latency_sensitive\nQueue depth: 50 pods\nDeadline: yes\nCluster: 4 nodes (avg CPU 80%)",
-        "decision": "PRIORITY",
+        "snapshot": """{"workload": {"workload_type": "compute_heavy", "avg_cpu_request": 2.0, "avg_memory_request_gb": 4.0, "has_deadline": false}, "nodes": [{"cpu_utilization": 0.45, "memory_utilization": 0.50}, {"cpu_utilization": 0.50, "memory_utilization": 0.55}]}""",
+        "decision": "BIN_PACKING"
     },
+
+    # --- 5. LOW LOAD COMPUTE → FIFO ---
     {
-        "snapshot": "Workload type: compute_heavy\nQueue depth: 5 pods\nCluster: 4 nodes (avg CPU 92%)",
-        "decision": "SPREAD",
+        "snapshot": """{"workload": {"workload_type": "compute_heavy", "avg_cpu_request": 1.0, "avg_memory_request_gb": 2.0, "has_deadline": false}, "nodes": [{"cpu_utilization": 0.20, "memory_utilization": 0.25}, {"cpu_utilization": 0.25, "memory_utilization": 0.30}]}""",
+        "decision": "FIFO"
     },
-    {
-        "snapshot": "Workload type: latency_sensitive\nQueue depth: 2 pods\nCluster: 10 nodes (avg CPU 5%)",
-        "decision": "FIFO",
-    }
+
 ]
 
-def _build_messages(snapshot: ClusterSnapshot, n_examples: int = 2) -> list[dict]:
+def _build_messages(snapshot: ClusterSnapshot, n_examples: int = 5) -> list[dict]:
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for ex in FEW_SHOT_EXAMPLES[:n_examples]:
         messages.append({"role": "user", "content": f"Cluster snapshot:\n{ex['snapshot']}"})
@@ -138,7 +143,7 @@ def _parse_response(raw: str) -> SchedulingDecision:
     if "BIZ" in cleaned:
         cleaned = cleaned.replace("BIZ", "BIN")
 
-    pattern = r"(FIFO|PRIORITY|BIN_PACKING|SPREAD|GANG)"
+    pattern = r"(FIFO|PRIORITY|BIN_PACKING|SPREAD)"
     match = re.search(pattern, cleaned)
 
     if not match:
@@ -163,7 +168,7 @@ def load_model(model_path: str | Path, **kwargs):
         verbose=kwargs.get("verbose", False)
     )
 
-def query_llm(snapshot: ClusterSnapshot, llm, n_examples: int = 2) -> TimedDecision:
+def query_llm(snapshot: ClusterSnapshot, llm, n_examples: int = 5) -> TimedDecision:
     messages = _build_messages(snapshot, n_examples=n_examples)
 
     t0 = time.perf_counter()
