@@ -18,14 +18,16 @@ os.environ.setdefault("LLAMA_N_THREADS_BATCH", "12")
 
 
 class WorkloadType(str, Enum):
-    COMPUTE_HEAVY     = "compute_heavy"
+    COMPUTE_HEAVY = "compute_heavy"
     LATENCY_SENSITIVE = "latency_sensitive"
 
+
 class Policy(str, Enum):
-    FIFO         = "FIFO"
-    PRIORITY     = "PRIORITY"
-    BIN_PACKING  = "BIN_PACKING"
-    SPREAD       = "SPREAD"
+    FIFO = "FIFO"
+    PRIORITY = "PRIORITY"
+    BIN_PACKING = "BIN_PACKING"
+    SPREAD = "SPREAD"
+
 
 @dataclass
 class NodeState:
@@ -36,6 +38,7 @@ class NodeState:
     available_cpu_cores:    float
     available_memory_gb:    float
 
+
 @dataclass
 class WorkloadDescriptor:
     workload_type:          WorkloadType
@@ -44,6 +47,7 @@ class WorkloadDescriptor:
     avg_memory_request_gb:  float
     has_deadline:           bool
     deadline_seconds:       Optional[float] = None
+
 
 @dataclass
 class ClusterSnapshot:
@@ -54,7 +58,8 @@ class ClusterSnapshot:
 
     def summarize(self) -> str:
         avg_cpu = sum(n.cpu_utilization for n in self.nodes) / len(self.nodes)
-        avg_mem = sum(n.memory_utilization for n in self.nodes) / len(self.nodes)
+        avg_mem = sum(n.memory_utilization for n in self.nodes) / \
+            len(self.nodes)
         node_summary = f"{len(self.nodes)} nodes (avg CPU {avg_cpu:.0%}, avg mem {avg_mem:.0%})"
 
         lines = [
@@ -67,10 +72,12 @@ class ClusterSnapshot:
         ]
         return "\n".join(lines)
 
+
 @dataclass
 class SchedulingDecision:
     recommended_policy: Policy
     raw_response:       str = field(default="", repr=False)
+
 
 @dataclass
 class TimedDecision:
@@ -85,6 +92,7 @@ class TimedDecision:
             f"Latency    : {self.inference_ms:.1f} ms "
             f"({self.tokens_per_second:.1f} tok/s, {self.tokens_generated} tokens)"
         )
+
 
 SYSTEM_PROMPT = """\
 You are a Kubernetes scheduling policy advisor.
@@ -127,12 +135,15 @@ FEW_SHOT_EXAMPLES = [
 
 ]
 
+
 def _build_messages(snapshot: ClusterSnapshot, n_examples: int = 5) -> list[dict]:
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for ex in FEW_SHOT_EXAMPLES[:n_examples]:
-        messages.append({"role": "user", "content": f"Cluster snapshot:\n{ex['snapshot']}"})
+        messages.append(
+            {"role": "user", "content": f"Cluster snapshot:\n{ex['snapshot']}"})
         messages.append({"role": "assistant", "content": ex["decision"]})
-    messages.append({"role": "user", "content": f"Cluster snapshot:\n{snapshot.summarize()}"})
+    messages.append(
+        {"role": "user", "content": f"Cluster snapshot:\n{snapshot.summarize()}"})
     return messages
 
 
@@ -147,12 +158,14 @@ def _parse_response(raw: str) -> SchedulingDecision:
     match = re.search(pattern, cleaned)
 
     if not match:
-        raise RuntimeError(f"LLM failed to return a valid policy. Raw: '{raw}'")
+        raise RuntimeError(
+            f"LLM failed to return a valid policy. Raw: '{raw}'")
 
     return SchedulingDecision(
         recommended_policy=Policy(match.group(1)),
         raw_response=raw
     )
+
 
 def load_model(model_path: str | Path, **kwargs):
     try:
@@ -168,8 +181,9 @@ def load_model(model_path: str | Path, **kwargs):
         verbose=kwargs.get("verbose", False)
     )
 
+
 def query_llm(snapshot: ClusterSnapshot, llm, n_examples: int = 5) -> TimedDecision:
-    messages = _build_messages(snapshot, n_examples=n_examples)
+    messages = _build_messages(snapshot, n_examples=0)
 
     t0 = time.perf_counter()
     response = llm.create_chat_completion(
@@ -191,6 +205,7 @@ def query_llm(snapshot: ClusterSnapshot, llm, n_examples: int = 5) -> TimedDecis
         tokens_generated=tokens_out,
         tokens_per_second=tok_per_sec
     )
+
 
 if __name__ == "__main__":
     test_snapshot = ClusterSnapshot(
